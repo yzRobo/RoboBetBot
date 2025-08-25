@@ -70,11 +70,18 @@ This generates a `dist-portable/` folder containing:
 
 ZIP the folder to distribute to others.
 
-## Discord Setup
+## Discord Bot Setup
 
-### Bot Permissions Required
+### Getting a Bot Token
+1. Visit [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create new application
+3. Go to Bot section
+4. Copy token for configuration
+5. Here you can customize the bot how you see fit (Name, bot image, etc.). This is how it will display in discord
+
+### Required Permissions
 - Send Messages
-- Use Application Commands
+- Use Application Commands  
 - Read Messages/View Channels
 - Add Reactions
 - Manage Messages
