@@ -10,6 +10,7 @@ A Discord bot for managing friendly sports betting within your server. Features 
 - **Automatic stat tracking** - Win/loss records, profit tracking, leaderboards
 - **Multiple bet types** - Game bets, player props, futures
 - **SQLite database** - Persistent storage of all bets and statistics
+- **Emoji-based resolution** - Both players click 🅰️/🅱️/❌ to resolve or cancel
 
 ## Quick Start
 
