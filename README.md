@@ -95,7 +95,7 @@ Your bot should now be online in your Discord server!
 
 **Note:** If you're updating from a previous version, delete your old `bets.db` file to start fresh with the new two-sided betting system.
 
-## 🤝 Fair Play Consensus System
+## Fair Play Consensus System
 
 The bot uses a consensus mechanism to ensure fairness:
 
