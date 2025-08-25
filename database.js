@@ -1,26 +1,10 @@
-module.exports = {
-    initDatabase,
-    upsertUser,
-    createBet,
-    joinBetSide,
-    getBetByMessageId,
-    getBetById,
-    resolveBet,
-    updateUserStats,
-    getUserStats,
-    getLeaderboard,
-    getActiveBets,
-    getUserBetHistory,
-    cancelBet,
-    createResolutionRequest,
-    getResolutionRequestByMessageId,
-    confirmResolutionRequest,
-    cancelActiveBet,
-    deleteResolutionRequest,
-    getActiveResolutionRequest
-};// database.js
+// database.js
 const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('./bets.db');
+
+// Docker support: Use DATABASE_PATH env variable if set, otherwise use default
+// This won't affect portable or development versions at all
+const DATABASE_PATH = process.env.DATABASE_PATH || './bets.db';
+const db = new sqlite3.Database(DATABASE_PATH);
 
 // Initialize database tables
 function initDatabase() {
@@ -57,8 +41,8 @@ function initDatabase() {
                     side_b_description TEXT NOT NULL,
                     side_a_odds REAL DEFAULT 2.0,
                     side_b_odds REAL DEFAULT 2.0,
-                    side_a_emoji TEXT DEFAULT '🏈',
-                    side_b_emoji TEXT DEFAULT '🎯',
+                    side_a_emoji TEXT DEFAULT '✈️',
+                    side_b_emoji TEXT DEFAULT '🏠',
                     side_a_user_id TEXT,
                     side_b_user_id TEXT,
                     home_team TEXT,
@@ -477,5 +461,11 @@ module.exports = {
     getLeaderboard,
     getActiveBets,
     getUserBetHistory,
-    cancelBet
+    cancelBet,
+    createResolutionRequest,
+    getResolutionRequestByMessageId,
+    confirmResolutionRequest,
+    cancelActiveBet,
+    deleteResolutionRequest,
+    getActiveResolutionRequest
 };

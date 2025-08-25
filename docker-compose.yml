@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  robobetbot:
+    image: robobetbot:latest
+    container_name: robobetbot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Add your Discord token here or use .env file
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DATABASE_PATH=/data/bets.db
+      - TZ=America/New_York  # Set your timezone
+    volumes:
+      # Persist database and configuration
+      - ./data:/data
+      - ./.env:/usr/src/app/.env:ro  # Read-only mount of .env file
+    networks:
+      - bot-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  bot-data:
+    driver: local

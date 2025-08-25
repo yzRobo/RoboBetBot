@@ -1,0 +1,80 @@
+# docker-compose.dockge.yml
+# Optimized for Dockge/TrueNAS/Portainer users
+# Instructions: Just change DISCORD_TOKEN and deploy!
+
+version: '3.8'
+
+services:
+  robobetbot:
+    # Auto-clone from GitHub and run
+    image: node:18-alpine
+    container_name: robobetbot
+    restart: unless-stopped
+    
+    environment:
+      # CHANGE THIS TO YOUR BOT TOKEN!
+      DISCORD_TOKEN: "PASTE_YOUR_TOKEN_HERE"
+      
+      # Optional: Change these if needed
+      TZ: "America/New_York"  # Your timezone
+      DATABASE_PATH: "/data/bets.db"
+      
+      # Auto-clone from GitHub (uses your public repo)
+      GITHUB_REPO: "https://github.com/yzRobo/RoboBetBot.git"
+      
+    volumes:
+      # Data persistence (database)
+      - ./data:/data
+      
+      # App code (auto-downloaded)
+      - ./app:/app
+    
+    working_dir: /app
+    
+    # This command handles everything automatically
+    command: >
+      sh -c "
+        if [ ! -f /app/bot.js ]; then
+          echo '===================================' &&
+          echo 'First run - setting up RoboBetBot' &&
+          echo '===================================' &&
+          apk add --no-cache git &&
+          git clone $$GITHUB_REPO /app &&
+          echo 'Installing dependencies...' &&
+          npm install --production &&
+          echo '===================================' &&
+          echo 'Setup complete! Starting bot...' &&
+          echo '==================================='
+        fi &&
+        echo 'Starting RoboBetBot...' &&
+        node bot.js
+      "
+    
+    # Health monitoring
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Resource limits (optional - adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+# Network configuration
+networks:
+  default:
+    name: robobetbot-network
+    driver: bridge
+
+# Named volumes for better management in Dockge
+volumes:
+  bot-data:
+    name: robobetbot-data
+  bot-app:
+    name: robobetbot-app
