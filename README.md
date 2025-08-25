@@ -155,7 +155,15 @@ RoboBetBot/
 
 ## License
 
-ISC License - See LICENSE file for details
+**GPL-3.0** - This ensures CardCast remains free and open source forever.
+
+Key points:
+- Free to use for any purpose
+- Modify and distribute freely
+- Must keep source code open
+- Include license in distributions
+
+See [LICENSE](LICENSE) file for full details.
 
 ## Support
 
