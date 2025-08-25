@@ -208,6 +208,70 @@ chmod +x docker.sh
 ./docker.sh shell    # Container shell access
 ```
 
+## Volume Path Configuration
+
+### IMPORTANT: Choosing the Right Data Path
+
+The bot needs a place to store its database (`bets.db`). You **must** update the volume path in the compose file to match your system.
+
+#### For NAS Users
+
+Find your dataset/share path and update the compose file:
+
+| NAS System | Typical Path Format | Example |
+|------------|-------------------|---------|
+| **TrueNAS SCALE** | `/mnt/poolname/dataset` | `/mnt/tank/RoboBetBot:/data` |
+| **TrueNAS CORE** | `/mnt/poolname/dataset` | `/mnt/tank/RoboBetBot:/data` |
+| **Synology** | `/volume1/docker/appname` | `/volume1/docker/robobetbot:/data` |
+| **QNAP** | `/share/Container/appname` | `/share/Container/robobetbot:/data` |
+| **Unraid** | `/mnt/user/appdata/appname` | `/mnt/user/appdata/robobetbot:/data` |
+| **OMV** | `/srv/dev-disk-by-uuid/path` | `/srv/appdata/robobetbot:/data` |
+
+#### For VPS/Linux Users
+
+Create a directory and use its absolute path:
+```bash
+mkdir -p /opt/robobetbot/data
+# Then in compose: /opt/robobetbot/data:/data
+```
+
+#### For Docker Desktop Users
+
+Use a relative path (creates folder where compose file is):
+```yaml
+volumes:
+  - ./data:/data  # This is the default
+```
+
+### Finding Your Correct Path
+
+**TrueNAS Users:**
+1. Go to Storage → Pools/Datasets
+2. Find your dataset
+3. Note the "Path" or "Mount Point"
+4. Use this in your compose file
+
+**Synology Users:**
+1. Open File Station
+2. Navigate to your docker folder
+3. Right-click → Properties
+4. Use the "Location" path
+
+**Command Line Method (All Systems):**
+```bash
+# Find where you want to store data
+pwd  # Shows current directory
+df -h  # Shows mounted filesystems
+ls /mnt/  # Common mount point
+ls /volume*/  # Synology volumes
+```
+
+### Why This Matters
+
+- **Wrong path**: Data gets lost when container updates
+- **Right path**: Data persists forever, easy backups
+- **Default `./data`**: Only good for testing, not production
+
 ## Makefile Commands
 
 Cross-platform commands using make:

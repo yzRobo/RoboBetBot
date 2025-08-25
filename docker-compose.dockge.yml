@@ -1,6 +1,10 @@
 # docker-compose.dockge.yml
 # Optimized for Dockge/TrueNAS/Portainer users
-# Instructions: Just change DISCORD_TOKEN and deploy!
+# 
+# QUICK START:
+# 1. Update DISCORD_TOKEN with your bot token
+# 2. Update the volume path for your system (see IMPORTANT note below)
+# 3. Deploy!
 
 version: '3.8'
 
@@ -12,21 +16,31 @@ services:
     restart: unless-stopped
     
     environment:
-      # CHANGE THIS TO YOUR BOT TOKEN!
+      # REQUIRED: Change this to your Discord bot token!
       DISCORD_TOKEN: "PASTE_YOUR_TOKEN_HERE"
       
       # Optional: Change these if needed
       TZ: "America/New_York"  # Your timezone
       DATABASE_PATH: "/data/bets.db"
       
-      # Auto-clone from GitHub (uses your public repo)
+      # Auto-clone from GitHub (uses public repo)
       GITHUB_REPO: "https://github.com/yzRobo/RoboBetBot.git"
       
     volumes:
-      # Data persistence (database)
+      # IMPORTANT: Update this path for your system!
+      # The database will be stored at this location.
+      # 
+      # Examples for different systems:
+      # - TrueNAS: /mnt/YourPool/YourDataset:/data
+      # - Synology: /volume1/docker/robobetbot:/data  
+      # - QNAP: /share/Container/robobetbot:/data
+      # - Unraid: /mnt/user/appdata/robobetbot:/data
+      # - Generic Docker: ./data:/data (relative path, stores in Dockge directory)
+      #
+      # Current setting (change this to your path):
       - ./data:/data
       
-      # App code (auto-downloaded)
+      # App code (auto-downloaded) - usually don't need to change this
       - ./app:/app
     
     working_dir: /app
@@ -59,6 +73,7 @@ services:
       start_period: 60s
     
     # Resource limits (optional - adjust as needed)
+    # Increase these if bot seems slow or crashes
     deploy:
       resources:
         limits:
@@ -72,7 +87,7 @@ networks:
     name: robobetbot-network
     driver: bridge
 
-# Named volumes for better management in Dockge
+# Named volumes (only used if you keep ./data instead of absolute path)
 volumes:
   bot-data:
     name: robobetbot-data
