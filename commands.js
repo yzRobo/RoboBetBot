@@ -153,7 +153,7 @@ function getBetEmojis(betType) {
         case 'game':
             return { sideA: '✈️', sideB: '🏠' };
         case 'prop':
-            return { sideA: '✅', sideB: '❌' };
+            return { sideA: '⬆️', sideB: '⬇️' }; // Changed from ✅/❌ to Up/Down arrows
         case 'future':
             return { sideA: '🎯', sideB: '🎲' };
         default:
@@ -348,42 +348,40 @@ async function handleReactionAdd(reaction, user, client) {
     const bet = await db.getBetByMessageId(messageId);
     if (!bet) return;
 
-    // Don't let users react to their own actions
-    if (bet.creator_id === user.id && bet.status === 'pending' && 
-        (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji)) {
-        // Creator trying to take a side on their own pending bet
-        await reaction.users.remove(user.id);
-        return;
-    }
-
     // Handle based on bet status
     if (bet.status === 'pending') {
-        // Handle joining a bet
-        await handleJoinBet(reaction, user, client, bet);
-    } else if (bet.status === 'active') {
-        // Only participants can resolve/cancel
-        if (bet.side_a_user_id !== user.id && bet.side_b_user_id !== user.id) {
-            await reaction.users.remove(user.id);
-            return;
+        // For pending bets, only handle joining reactions
+        if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
+            // Handle joining the bet
+            await handleJoinBet(reaction, user, client, bet);
         }
+        // Ignore other reactions on pending bets (don't remove them)
         
-        // Handle resolution or cancellation
-        if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️') {
-            await handleEmojiResolution(reaction, user, client, bet);
-        } else if (reaction.emoji.name === '❌') {
-            await handleEmojiCancellation(reaction, user, client, bet);
+    } else if (bet.status === 'active') {
+        // For active bets, handle resolution/cancellation emojis
+        if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️' || reaction.emoji.name === '❌') {
+            // Only participants can resolve/cancel
+            if (bet.side_a_user_id !== user.id && bet.side_b_user_id !== user.id) {
+                await reaction.users.remove(user.id);
+                return;
+            }
+            
+            // Handle resolution or cancellation
+            if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️') {
+                await handleEmojiResolution(reaction, user, client, bet);
+            } else if (reaction.emoji.name === '❌') {
+                await handleEmojiCancellation(reaction, user, client, bet);
+            }
+        } else if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
+            // Remove bet-joining emojis on active bets (already filled)
+            await reaction.users.remove(user.id);
         }
+        // Ignore other reactions (don't remove them)
     }
 }
 
 // Handle joining a bet through emoji reaction
 async function handleJoinBet(reaction, user, client, bet) {
-    // Can't bet against yourself
-    if ((bet.side_a_user_id === user.id) || (bet.side_b_user_id === user.id)) {
-        await reaction.users.remove(user.id);
-        return;
-    }
-
     // Determine which side based on emoji
     let side;
     if (reaction.emoji.name === bet.side_a_emoji) {
@@ -391,7 +389,22 @@ async function handleJoinBet(reaction, user, client, bet) {
     } else if (reaction.emoji.name === bet.side_b_emoji) {
         side = 'B';
     } else {
-        return; // Not a valid bet emoji
+        return; // Not a valid bet emoji, ignore it
+    }
+
+    // Can't bet against yourself (check if already has a side)
+    if ((side === 'A' && bet.side_b_user_id === user.id) || 
+        (side === 'B' && bet.side_a_user_id === user.id)) {
+        // User trying to take both sides
+        await reaction.users.remove(user.id);
+        return;
+    }
+
+    // Check if user already has this side
+    if ((side === 'A' && bet.side_a_user_id === user.id) || 
+        (side === 'B' && bet.side_b_user_id === user.id)) {
+        // User already has this side, don't remove reaction
+        return;
     }
 
     // Ensure user exists in database
@@ -442,7 +455,8 @@ async function handleJoinBet(reaction, user, client, bet) {
         
         await message.edit({ embeds: [embed] });
         
-        // Add resolution/cancellation emojis
+        // Clear existing reactions and add resolution/cancellation emojis
+        await message.reactions.removeAll();
         await addResolutionEmojis(message);
         
         await message.channel.send(
