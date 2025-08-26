@@ -5,7 +5,31 @@ All notable changes to RoboBetBot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.2.0] - 2025-08-25
+## [Unreleased]
+
+### Added
+- Nothing yet
+
+### Changed
+- Nothing yet
+
+### Fixed
+- Nothing yet
+
+## [1.2.1] - 2025-08-26
+
+### Fixed
+- **Critical bug**: Bet creators can now properly join their own bets (take one side)
+- **Emoji conflict**: Changed prop bet emojis from ✅/❌ to ⬆️/⬇️ to avoid conflict with cancellation emoji
+- **Reaction handling**: Fixed issue where valid reactions were being incorrectly removed
+- **Creator participation**: Creators can now take one side of their bet but still cannot bet against themselves
+
+### Changed
+- Prop bet emojis updated: ⬆️ for Over/Yes (Side A), ⬇️ for Under/No (Side B)
+- Improved reaction validation logic to only remove truly invalid reactions
+- Better separation between bet-joining emojis and resolution/cancellation emojis
+
+## [1.2.0] - 2025-08-25
 
 ### Added
 - **Emoji-Based Resolution & Cancellation** - No typing needed!
@@ -103,6 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Portable build script
 - Self-contained Windows executable
 
-[Unreleased]: https://github.com/yzRobo/RoboBetBot/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/yzRobo/RoboBetBot/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/yzRobo/RoboBetBot/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/yzRobo/RoboBetBot/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yzRobo/RoboBetBot/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yzRobo/RoboBetBot/releases/tag/v1.0.0
