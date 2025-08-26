@@ -1,8 +1,7 @@
-// database.js
+// database.js - Updated with proper stake tracking
 const sqlite3 = require('sqlite3').verbose();
 
 // Docker support: Use DATABASE_PATH env variable if set, otherwise use default
-// This won't affect portable or development versions at all
 const DATABASE_PATH = process.env.DATABASE_PATH || './bets.db';
 const db = new sqlite3.Database(DATABASE_PATH);
 
@@ -29,7 +28,7 @@ function initDatabase() {
                 if (err) reject(err);
             });
 
-            // Bets table - updated for two-sided betting with odds
+            // Bets table - UPDATED with separate stake columns
             db.run(`
                 CREATE TABLE IF NOT EXISTS bets (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +36,8 @@ function initDatabase() {
                     bet_type TEXT NOT NULL,
                     description TEXT NOT NULL,
                     amount REAL NOT NULL,
+                    side_a_stake REAL,
+                    side_b_stake REAL,
                     side_a_description TEXT NOT NULL,
                     side_b_description TEXT NOT NULL,
                     side_a_odds REAL DEFAULT 2.0,
@@ -61,7 +62,11 @@ function initDatabase() {
                     FOREIGN KEY (side_b_user_id) REFERENCES users(user_id)
                 )
             `, (err) => {
-                if (err) reject(err);
+                if (err) {
+                    // Table might already exist, try to add new columns
+                    db.run(`ALTER TABLE bets ADD COLUMN side_a_stake REAL`, () => {});
+                    db.run(`ALTER TABLE bets ADD COLUMN side_b_stake REAL`, () => {});
+                }
             });
 
             // Resolution requests table
@@ -109,29 +114,47 @@ function upsertUser(userId, username) {
     });
 }
 
-// Create a new bet
+// Create a new bet - UPDATED to include stake amounts
 function createBet(betData) {
     return new Promise((resolve, reject) => {
         const {
             creatorId, betType, description, amount,
+            sideAStake, sideBStake,  // NEW fields for actual stakes
             sideADesc, sideBDesc, sideAOdds, sideBOdds,
             sideAEmoji, sideBEmoji,
             homeTeam, awayTeam, playerName, otherDetails,
             messageId, channelId
         } = betData;
         
+        // For backward compatibility, calculate stakes if not provided
+        let actualSideAStake = sideAStake;
+        let actualSideBStake = sideBStake;
+        
+        if (!actualSideAStake || !actualSideBStake) {
+            // Calculate balanced stakes if not provided (for backward compatibility)
+            if (sideAOdds >= sideBOdds) {
+                actualSideAStake = amount;
+                actualSideBStake = amount * (sideAOdds - 1);
+            } else {
+                actualSideBStake = amount;
+                actualSideAStake = amount * (sideBOdds - 1);
+            }
+        }
+        
         db.run(`
             INSERT INTO bets (
                 creator_id, bet_type, description, amount,
+                side_a_stake, side_b_stake,
                 side_a_description, side_b_description,
                 side_a_odds, side_b_odds,
                 side_a_emoji, side_b_emoji,
                 home_team, away_team, player_name, other_details,
                 message_id, channel_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             creatorId, betType, description, amount,
+            actualSideAStake, actualSideBStake,
             sideADesc, sideBDesc, sideAOdds, sideBOdds,
             sideAEmoji, sideBEmoji,
             homeTeam, awayTeam, playerName, otherDetails,
@@ -193,7 +216,7 @@ function joinBetSide(betId, userId, side) {
     });
 }
 
-// Get bet by message ID
+// Get bet by message ID - UPDATED to include stake columns
 function getBetByMessageId(messageId) {
     return new Promise((resolve, reject) => {
         db.get(`
@@ -201,12 +224,24 @@ function getBetByMessageId(messageId) {
             WHERE message_id = ?
         `, [messageId], (err, row) => {
             if (err) reject(err);
-            else resolve(row);
+            else {
+                // For backward compatibility, calculate stakes if null
+                if (row && (!row.side_a_stake || !row.side_b_stake)) {
+                    if (row.side_a_odds >= row.side_b_odds) {
+                        row.side_a_stake = row.amount;
+                        row.side_b_stake = row.amount * (row.side_a_odds - 1);
+                    } else {
+                        row.side_b_stake = row.amount;
+                        row.side_a_stake = row.amount * (row.side_b_odds - 1);
+                    }
+                }
+                resolve(row);
+            }
         });
     });
 }
 
-// Get bet by ID
+// Get bet by ID - UPDATED to include stake columns
 function getBetById(betId) {
     return new Promise((resolve, reject) => {
         db.get(`
@@ -214,7 +249,19 @@ function getBetById(betId) {
             WHERE id = ?
         `, [betId], (err, row) => {
             if (err) reject(err);
-            else resolve(row);
+            else {
+                // For backward compatibility, calculate stakes if null
+                if (row && (!row.side_a_stake || !row.side_b_stake)) {
+                    if (row.side_a_odds >= row.side_b_odds) {
+                        row.side_a_stake = row.amount;
+                        row.side_b_stake = row.amount * (row.side_a_odds - 1);
+                    } else {
+                        row.side_b_stake = row.amount;
+                        row.side_a_stake = row.amount * (row.side_b_odds - 1);
+                    }
+                }
+                resolve(row);
+            }
         });
     });
 }
@@ -285,7 +332,7 @@ function getLeaderboard(limit = 10) {
     });
 }
 
-// Get active bets
+// Get active bets - UPDATED to ensure stake columns are included
 function getActiveBets() {
     return new Promise((resolve, reject) => {
         db.all(`
@@ -301,12 +348,27 @@ function getActiveBets() {
             ORDER BY b.created_at DESC
         `, (err, rows) => {
             if (err) reject(err);
-            else resolve(rows);
+            else {
+                // For backward compatibility, calculate stakes if null
+                rows = rows.map(row => {
+                    if (!row.side_a_stake || !row.side_b_stake) {
+                        if (row.side_a_odds >= row.side_b_odds) {
+                            row.side_a_stake = row.amount;
+                            row.side_b_stake = row.amount * (row.side_a_odds - 1);
+                        } else {
+                            row.side_b_stake = row.amount;
+                            row.side_a_stake = row.amount * (row.side_b_odds - 1);
+                        }
+                    }
+                    return row;
+                });
+                resolve(rows);
+            }
         });
     });
 }
 
-// Get user's bet history
+// Get user's bet history - UPDATED to ensure stake columns are included
 function getUserBetHistory(userId, limit = 20) {
     return new Promise((resolve, reject) => {
         db.all(`
@@ -324,7 +386,22 @@ function getUserBetHistory(userId, limit = 20) {
             LIMIT ?
         `, [userId, userId, limit], (err, rows) => {
             if (err) reject(err);
-            else resolve(rows);
+            else {
+                // For backward compatibility, calculate stakes if null
+                rows = rows.map(row => {
+                    if (!row.side_a_stake || !row.side_b_stake) {
+                        if (row.side_a_odds >= row.side_b_odds) {
+                            row.side_a_stake = row.amount;
+                            row.side_b_stake = row.amount * (row.side_a_odds - 1);
+                        } else {
+                            row.side_b_stake = row.amount;
+                            row.side_a_stake = row.amount * (row.side_b_odds - 1);
+                        }
+                    }
+                    return row;
+                });
+                resolve(rows);
+            }
         });
     });
 }
@@ -362,7 +439,8 @@ function createResolutionRequest(betId, requestType, proposedWinner, messageId, 
 function getResolutionRequestByMessageId(messageId) {
     return new Promise((resolve, reject) => {
         db.get(`
-            SELECT rr.*, b.side_a_user_id, b.side_b_user_id, b.amount, 
+            SELECT rr.*, b.side_a_user_id, b.side_b_user_id, b.amount,
+                   b.side_a_stake, b.side_b_stake,  
                    b.side_a_odds, b.side_b_odds, b.description,
                    b.side_a_description, b.side_b_description
             FROM resolution_requests rr
@@ -370,7 +448,19 @@ function getResolutionRequestByMessageId(messageId) {
             WHERE rr.message_id = ?
         `, [messageId], (err, row) => {
             if (err) reject(err);
-            else resolve(row);
+            else {
+                // For backward compatibility, calculate stakes if null
+                if (row && (!row.side_a_stake || !row.side_b_stake)) {
+                    if (row.side_a_odds >= row.side_b_odds) {
+                        row.side_a_stake = row.amount;
+                        row.side_b_stake = row.amount * (row.side_a_odds - 1);
+                    } else {
+                        row.side_b_stake = row.amount;
+                        row.side_a_stake = row.amount * (row.side_b_odds - 1);
+                    }
+                }
+                resolve(row);
+            }
         });
     });
 }

@@ -1,4 +1,4 @@
-// commands.js
+// commands.js - Updated with proper peer-to-peer odds handling
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('./database');
 
@@ -26,7 +26,7 @@ async function registerCommands(guild) {
                             ))
                     .addNumberOption(option =>
                         option.setName('amount')
-                            .setDescription('Bet amount')
+                            .setDescription('Base amount to win (pot will be calculated from odds)')
                             .setRequired(true)
                             .setMinValue(1))
                     .addStringOption(option =>
@@ -153,7 +153,7 @@ function getBetEmojis(betType) {
         case 'game':
             return { sideA: '✈️', sideB: '🏠' };
         case 'prop':
-            return { sideA: '⬆️', sideB: '⬇️' }; // Changed from ✅/❌ to Up/Down arrows
+            return { sideA: '⬆️', sideB: '⬇️' };
         case 'future':
             return { sideA: '🎯', sideB: '🎲' };
         default:
@@ -212,15 +212,49 @@ function formatOdds(decimal) {
     return `${american} (${decimal.toFixed(2)}x)`;
 }
 
-// Calculate potential payout
-function calculatePayout(amount, odds) {
-    return amount * odds;
+// Calculate stake needed based on odds to win a specific amount
+function calculateStakeToWin(amountToWin, odds) {
+    // For decimal odds: stake = amountToWin / (odds - 1)
+    return amountToWin / (odds - 1);
+}
+
+// Calculate proper stakes for balanced peer-to-peer betting
+function calculateBalancedStakes(baseAmount, oddsA, oddsB) {
+    // The base amount represents what the underdog (higher odds) wants to win
+    // Calculate stakes so the total pot equals winner's stake + winnings
+    
+    let stakeA, stakeB, toWinA, toWinB;
+    
+    if (oddsA >= oddsB) {
+        // Side A is underdog (higher odds)
+        stakeA = baseAmount;
+        toWinA = baseAmount * (oddsA - 1);
+        stakeB = toWinA;
+        toWinB = stakeB / (oddsB - 1);
+    } else {
+        // Side B is underdog (higher odds)
+        stakeB = baseAmount;
+        toWinB = baseAmount * (oddsB - 1);
+        stakeA = toWinB;
+        toWinA = stakeA / (oddsA - 1);
+    }
+    
+    // Ensure the pot balances (total stakes = winner's return)
+    const totalPot = stakeA + stakeB;
+    
+    return {
+        stakeA: stakeA,
+        stakeB: stakeB,
+        toWinA: toWinA,
+        toWinB: toWinB,
+        totalPot: totalPot
+    };
 }
 
 // Create a new bet
 async function handleCreateBet(interaction, client) {
     const betType = interaction.options.getString('type');
-    const amount = interaction.options.getNumber('amount');
+    const baseAmount = interaction.options.getNumber('amount');
     const description = interaction.options.getString('description');
     const sideADesc = interaction.options.getString('side_a');
     const sideBDesc = interaction.options.getString('side_b');
@@ -236,6 +270,9 @@ async function handleCreateBet(interaction, client) {
     const sideAOdds = parseOdds(sideAOddsStr);
     const sideBOdds = parseOdds(sideBOddsStr);
 
+    // Calculate proper stakes for balanced betting
+    const stakes = calculateBalancedStakes(baseAmount, sideAOdds, sideBOdds);
+
     // Get emojis for this bet type
     const emojis = getBetEmojis(betType);
 
@@ -245,17 +282,17 @@ async function handleCreateBet(interaction, client) {
     // Create embed for the bet
     const embed = new EmbedBuilder()
         .setColor(0x0099FF)
-        .setTitle(`${getBetTypeDisplay(betType)} - $${amount}`)
+        .setTitle(`${getBetTypeDisplay(betType)} - Pot: $${stakes.totalPot.toFixed(2)}`)
         .setDescription(`**${description}**`)
         .addFields(
             { 
                 name: `${emojis.sideA} Side A`, 
-                value: `${sideADesc}\n**Odds:** ${formatOdds(sideAOdds)}\n**To Win:** $${(calculatePayout(amount, sideAOdds) - amount).toFixed(2)}`, 
+                value: `${sideADesc}\n**Odds:** ${formatOdds(sideAOdds)}\n**Stake:** $${stakes.stakeA.toFixed(2)}\n**To Win:** $${stakes.toWinA.toFixed(2)}`, 
                 inline: true 
             },
             { 
                 name: `${emojis.sideB} Side B`, 
-                value: `${sideBDesc}\n**Odds:** ${formatOdds(sideBOdds)}\n**To Win:** $${(calculatePayout(amount, sideBOdds) - amount).toFixed(2)}`, 
+                value: `${sideBDesc}\n**Odds:** ${formatOdds(sideBOdds)}\n**Stake:** $${stakes.stakeB.toFixed(2)}\n**To Win:** $${stakes.toWinB.toFixed(2)}`, 
                 inline: true 
             },
             { name: '\u200B', value: '\u200B', inline: true } // Empty field for spacing
@@ -281,7 +318,7 @@ async function handleCreateBet(interaction, client) {
     }
 
     embed.addFields(
-        { name: 'Wager Amount', value: `$${amount.toFixed(2)} each side`, inline: true },
+        { name: 'Total Pot', value: `$${stakes.totalPot.toFixed(2)}`, inline: true },
         { name: 'Status', value: '⏳ Waiting for participants', inline: true },
         { name: 'Bet ID', value: 'Creating...', inline: true }
     );
@@ -301,12 +338,14 @@ async function handleCreateBet(interaction, client) {
     await message.react(emojis.sideA);
     await message.react(emojis.sideB);
 
-    // Create bet in database with message ID
+    // Create bet in database with UPDATED stake amounts
     const betData = {
         creatorId: creator.id,
         betType,
         description,
-        amount,
+        amount: baseAmount, // Store base amount
+        sideAStake: stakes.stakeA, // NEW: Store actual stake for side A
+        sideBStake: stakes.stakeB, // NEW: Store actual stake for side B
         sideADesc,
         sideBDesc,
         sideAOdds,
@@ -332,54 +371,6 @@ async function handleCreateBet(interaction, client) {
     client.activeBets.set(message.id, betId);
 }
 
-// Add resolution/cancel emojis to an active bet
-async function addResolutionEmojis(message) {
-    // Add resolution and cancellation emojis
-    await message.react('🅰️'); // Side A wins
-    await message.react('🅱️'); // Side B wins
-    await message.react('❌'); // Cancel bet
-}
-
-// Handle reaction for joining a bet side or resolution/cancellation
-async function handleReactionAdd(reaction, user, client) {
-    const messageId = reaction.message.id;
-    
-    // Check if this is a bet message
-    const bet = await db.getBetByMessageId(messageId);
-    if (!bet) return;
-
-    // Handle based on bet status
-    if (bet.status === 'pending') {
-        // For pending bets, only handle joining reactions
-        if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
-            // Handle joining the bet
-            await handleJoinBet(reaction, user, client, bet);
-        }
-        // Ignore other reactions on pending bets (don't remove them)
-        
-    } else if (bet.status === 'active') {
-        // For active bets, handle resolution/cancellation emojis
-        if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️' || reaction.emoji.name === '❌') {
-            // Only participants can resolve/cancel
-            if (bet.side_a_user_id !== user.id && bet.side_b_user_id !== user.id) {
-                await reaction.users.remove(user.id);
-                return;
-            }
-            
-            // Handle resolution or cancellation
-            if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️') {
-                await handleEmojiResolution(reaction, user, client, bet);
-            } else if (reaction.emoji.name === '❌') {
-                await handleEmojiCancellation(reaction, user, client, bet);
-            }
-        } else if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
-            // Remove bet-joining emojis on active bets (already filled)
-            await reaction.users.remove(user.id);
-        }
-        // Ignore other reactions (don't remove them)
-    }
-}
-
 // Handle joining a bet through emoji reaction
 async function handleJoinBet(reaction, user, client, bet) {
     // Determine which side based on emoji
@@ -389,13 +380,12 @@ async function handleJoinBet(reaction, user, client, bet) {
     } else if (reaction.emoji.name === bet.side_b_emoji) {
         side = 'B';
     } else {
-        return; // Not a valid bet emoji, ignore it
+        return;
     }
 
-    // Can't bet against yourself (check if already has a side)
+    // Can't bet against yourself
     if ((side === 'A' && bet.side_b_user_id === user.id) || 
         (side === 'B' && bet.side_a_user_id === user.id)) {
-        // User trying to take both sides
         await reaction.users.remove(user.id);
         return;
     }
@@ -403,7 +393,6 @@ async function handleJoinBet(reaction, user, client, bet) {
     // Check if user already has this side
     if ((side === 'A' && bet.side_a_user_id === user.id) || 
         (side === 'B' && bet.side_b_user_id === user.id)) {
-        // User already has this side, don't remove reaction
         return;
     }
 
@@ -414,7 +403,6 @@ async function handleJoinBet(reaction, user, client, bet) {
     const result = await db.joinBetSide(bet.id, user.id, side);
     
     if (!result.success) {
-        // Side already taken
         await reaction.users.remove(user.id);
         return;
     }
@@ -423,21 +411,20 @@ async function handleJoinBet(reaction, user, client, bet) {
     const message = reaction.message;
     const embed = EmbedBuilder.from(message.embeds[0]);
     
+    // Calculate stakes for display
+    const stakes = calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds);
+    
     // Find and update the appropriate side field
     const sideFieldIndex = embed.data.fields.findIndex(f => 
         f.name.includes('Side A') || f.name.includes('Side B')
     );
     if (side === 'A' && sideFieldIndex !== -1) {
-        const sideOdds = bet.side_a_odds;
-        const potentialWin = calculatePayout(bet.amount, sideOdds) - bet.amount;
         embed.data.fields[sideFieldIndex].value = 
-            `${bet.side_a_description}\n**Odds:** ${formatOdds(sideOdds)}\n**To Win:** $${potentialWin.toFixed(2)}\n**Taken by:** <@${user.id}>`;
+            `${bet.side_a_description}\n**Odds:** ${formatOdds(bet.side_a_odds)}\n**Stake:** $${stakes.stakeA.toFixed(2)}\n**To Win:** $${stakes.toWinA.toFixed(2)}\n**Taken by:** <@${user.id}>`;
     } else if (side === 'B' && sideFieldIndex !== -1) {
         const sideFieldIndexB = sideFieldIndex + 1;
-        const sideOdds = bet.side_b_odds;
-        const potentialWin = calculatePayout(bet.amount, sideOdds) - bet.amount;
         embed.data.fields[sideFieldIndexB].value = 
-            `${bet.side_b_description}\n**Odds:** ${formatOdds(sideOdds)}\n**To Win:** $${potentialWin.toFixed(2)}\n**Taken by:** <@${user.id}>`;
+            `${bet.side_b_description}\n**Odds:** ${formatOdds(bet.side_b_odds)}\n**Stake:** $${stakes.stakeB.toFixed(2)}\n**To Win:** $${stakes.toWinB.toFixed(2)}\n**Taken by:** <@${user.id}>`;
     }
 
     if (result.activated) {
@@ -447,11 +434,8 @@ async function handleJoinBet(reaction, user, client, bet) {
         embed.setColor(0x00FF00);
         embed.setFooter({ text: 'Bet is active! React with 🅰️ (A wins), 🅱️ (B wins), or ❌ (cancel) - both players must agree' });
 
-        // Get the other user's ID
         const updatedBet = await db.getBetById(bet.id);
         const otherUserId = side === 'A' ? updatedBet.side_b_user_id : updatedBet.side_a_user_id;
-        const otherSideOdds = side === 'A' ? bet.side_b_odds : bet.side_a_odds;
-        const userOdds = side === 'A' ? bet.side_a_odds : bet.side_b_odds;
         
         await message.edit({ embeds: [embed] });
         
@@ -461,23 +445,21 @@ async function handleJoinBet(reaction, user, client, bet) {
         
         await message.channel.send(
             `🎲 **Bet #${bet.id} is now active!**\n` +
-            `<@${user.id}> (Side ${side} @ ${formatOdds(userOdds)}) vs <@${otherUserId}> (Side ${side === 'A' ? 'B' : 'A'} @ ${formatOdds(otherSideOdds)})\n` +
-            `**Stakes:** $${bet.amount} each\n\n` +
+            `<@${user.id}> (Side ${side} @ ${formatOdds(side === 'A' ? bet.side_a_odds : bet.side_b_odds)}) vs <@${otherUserId}> (Side ${side === 'A' ? 'B' : 'A'} @ ${formatOdds(side === 'A' ? bet.side_b_odds : bet.side_a_odds)})\n` +
+            `**Stakes:** Side A: $${stakes.stakeA.toFixed(2)} | Side B: $${stakes.stakeB.toFixed(2)}\n` +
+            `**Total Pot:** $${stakes.totalPot.toFixed(2)}\n\n` +
             `**To resolve:** Both players react with 🅰️ (Side A wins) or 🅱️ (Side B wins)\n` +
             `**To cancel:** Both players react with ❌`
         );
 
-        // Remove from active bets map since it's now filled
         client.activeBets.delete(messageId);
         
-        // Initialize tracking for this bet
         resolutionTracking.set(messageId, {
             sideA: new Set(),
             sideB: new Set(),
             cancel: new Set()
         });
     } else {
-        // Update status to show one side filled
         const statusFieldIndex = embed.data.fields.findIndex(f => f.name === 'Status');
         embed.data.fields[statusFieldIndex].value = `⏳ Side ${side} taken, waiting for opponent`;
         
@@ -489,7 +471,6 @@ async function handleJoinBet(reaction, user, client, bet) {
 async function handleEmojiResolution(reaction, user, client, bet) {
     const messageId = reaction.message.id;
     
-    // Initialize tracking if needed
     if (!resolutionTracking.has(messageId)) {
         resolutionTracking.set(messageId, {
             sideA: new Set(),
@@ -502,10 +483,8 @@ async function handleEmojiResolution(reaction, user, client, bet) {
     const winningSide = reaction.emoji.name === '🅰️' ? 'A' : 'B';
     const trackingKey = winningSide === 'A' ? 'sideA' : 'sideB';
     
-    // Add user's vote
     tracking[trackingKey].add(user.id);
     
-    // Clear from other options
     if (winningSide === 'A') {
         tracking.sideB.delete(user.id);
     } else {
@@ -513,23 +492,23 @@ async function handleEmojiResolution(reaction, user, client, bet) {
     }
     tracking.cancel.delete(user.id);
     
-    // Check if both participants agree
     if (tracking[trackingKey].has(bet.side_a_user_id) && tracking[trackingKey].has(bet.side_b_user_id)) {
-        // Both agree - resolve the bet
         await db.resolveBet(bet.id, winningSide);
         
-        // Calculate payouts
+        // Calculate PROPER payouts with different stakes
+        const stakes = calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds);
         const winnerId = winningSide === 'A' ? bet.side_a_user_id : bet.side_b_user_id;
         const loserId = winningSide === 'A' ? bet.side_b_user_id : bet.side_a_user_id;
-        const winnerOdds = winningSide === 'A' ? bet.side_a_odds : bet.side_b_odds;
-        const winnerPayout = calculatePayout(bet.amount, winnerOdds) - bet.amount;
-        const loserLoss = -bet.amount;
         
-        // Update stats
-        await db.updateUserStats(winnerId, true, bet.amount, winnerPayout);
-        await db.updateUserStats(loserId, false, bet.amount, loserLoss);
+        // Winner gets their stake back plus winnings
+        const winnerStake = winningSide === 'A' ? stakes.stakeA : stakes.stakeB;
+        const winnerWinnings = winningSide === 'A' ? stakes.toWinA : stakes.toWinB;
+        const loserStake = winningSide === 'A' ? stakes.stakeB : stakes.stakeA;
         
-        // Send confirmation
+        // Update stats with actual staked amounts
+        await db.updateUserStats(winnerId, true, winnerStake, winnerWinnings);
+        await db.updateUserStats(loserId, false, loserStake, -loserStake);
+        
         const winnerDesc = winningSide === 'A' ? bet.side_a_description : bet.side_b_description;
         const loserDesc = winningSide === 'A' ? bet.side_b_description : bet.side_a_description;
         
@@ -540,12 +519,12 @@ async function handleEmojiResolution(reaction, user, client, bet) {
             .addFields(
                 { 
                     name: '🏆 Winner', 
-                    value: `<@${winnerId}>\n**Side ${winningSide}:** ${winnerDesc}\n**Wagered:** $${bet.amount.toFixed(2)}\n**Won:** +$${winnerPayout.toFixed(2)}\n**Total Return:** $${(bet.amount + winnerPayout).toFixed(2)}`, 
+                    value: `<@${winnerId}>\n**Side ${winningSide}:** ${winnerDesc}\n**Staked:** $${winnerStake.toFixed(2)}\n**Won:** +$${winnerWinnings.toFixed(2)}\n**Total Return:** $${(winnerStake + winnerWinnings).toFixed(2)}`, 
                     inline: true 
                 },
                 { 
                     name: '❌ Loser', 
-                    value: `<@${loserId}>\n**Side ${winningSide === 'A' ? 'B' : 'A'}:** ${loserDesc}\n**Lost:** -$${bet.amount.toFixed(2)}`, 
+                    value: `<@${loserId}>\n**Side ${winningSide === 'A' ? 'B' : 'A'}:** ${loserDesc}\n**Lost:** -$${loserStake.toFixed(2)}`, 
                     inline: true 
                 }
             )
@@ -554,7 +533,6 @@ async function handleEmojiResolution(reaction, user, client, bet) {
 
         await reaction.message.channel.send({ embeds: [embed] });
         
-        // Update original bet message
         const originalEmbed = EmbedBuilder.from(reaction.message.embeds[0]);
         originalEmbed.setColor(0x808080);
         originalEmbed.setTitle(originalEmbed.data.title + ' [RESOLVED]');
@@ -562,10 +540,8 @@ async function handleEmojiResolution(reaction, user, client, bet) {
         originalEmbed.data.fields[statusFieldIndex].value = `🏁 Resolved - Side ${winningSide} Won`;
         await reaction.message.edit({ embeds: [originalEmbed] });
         
-        // Clean up tracking
         resolutionTracking.delete(messageId);
     } else {
-        // Send status update
         const otherUserId = user.id === bet.side_a_user_id ? bet.side_b_user_id : bet.side_a_user_id;
         await reaction.message.channel.send(
             `📊 <@${user.id}> voted that **Side ${winningSide}** won Bet #${bet.id}. Waiting for <@${otherUserId}> to confirm with ${reaction.emoji.name}`
@@ -573,11 +549,168 @@ async function handleEmojiResolution(reaction, user, client, bet) {
     }
 }
 
+// Handle resolution request confirmations
+async function handleResolutionConfirmation(reaction, user, client) {
+    const request = await db.getResolutionRequestByMessageId(reaction.message.id);
+    if (!request || reaction.emoji.name !== '✅') return;
+    
+    const userSide = request.side_a_user_id === user.id ? 'A' : 
+                    request.side_b_user_id === user.id ? 'B' : null;
+    
+    if (!userSide) {
+        await reaction.users.remove(user.id);
+        return;
+    }
+    
+    const result = await db.confirmResolutionRequest(request.id, user.id, userSide);
+    
+    if (result.bothConfirmed) {
+        const bet = await db.getBetById(request.bet_id);
+        
+        if (request.request_type === 'resolve') {
+            await db.resolveBet(request.bet_id, request.proposed_winner);
+            
+            // Calculate PROPER payouts with different stakes
+            const stakes = calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds);
+            const winnerId = request.proposed_winner === 'A' ? bet.side_a_user_id : bet.side_b_user_id;
+            const loserId = request.proposed_winner === 'A' ? bet.side_b_user_id : bet.side_a_user_id;
+            
+            const winnerStake = request.proposed_winner === 'A' ? stakes.stakeA : stakes.stakeB;
+            const winnerWinnings = request.proposed_winner === 'A' ? stakes.toWinA : stakes.toWinB;
+            const loserStake = request.proposed_winner === 'A' ? stakes.stakeB : stakes.stakeA;
+            
+            await db.updateUserStats(winnerId, true, winnerStake, winnerWinnings);
+            await db.updateUserStats(loserId, false, loserStake, -loserStake);
+            
+            const winnerDesc = request.proposed_winner === 'A' ? bet.side_a_description : bet.side_b_description;
+            const loserDesc = request.proposed_winner === 'A' ? bet.side_b_description : bet.side_a_description;
+            
+            const embed = new EmbedBuilder()
+                .setColor(0x00FF00)
+                .setTitle('✅ Bet Resolved!')
+                .setDescription(`**Bet #${request.bet_id}: ${bet.description}**`)
+                .addFields(
+                    { 
+                        name: '🏆 Winner', 
+                        value: `<@${winnerId}>\n**Side ${request.proposed_winner}:** ${winnerDesc}\n**Staked:** $${winnerStake.toFixed(2)}\n**Won:** +$${winnerWinnings.toFixed(2)}\n**Total Return:** $${(winnerStake + winnerWinnings).toFixed(2)}`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '❌ Loser', 
+                        value: `<@${loserId}>\n**Side ${request.proposed_winner === 'A' ? 'B' : 'A'}:** ${loserDesc}\n**Lost:** -$${loserStake.toFixed(2)}`, 
+                        inline: true 
+                    }
+                )
+                .setTimestamp();
+            
+            await reaction.message.channel.send({ embeds: [embed] });
+            
+        } else if (request.request_type === 'cancel') {
+            await db.cancelActiveBet(request.bet_id);
+            
+            const embed = new EmbedBuilder()
+                .setColor(0xFFFF00)
+                .setTitle('🚫 Bet Cancelled')
+                .setDescription(`**Bet #${request.bet_id}: ${bet.description}**\n\nBoth participants agreed to cancel. No money changed hands.`)
+                .setTimestamp();
+            
+            await reaction.message.channel.send({ embeds: [embed] });
+        }
+        
+        await db.deleteResolutionRequest(request.id);
+        
+        const originalEmbed = EmbedBuilder.from(reaction.message.embeds[0]);
+        originalEmbed.setColor(0x00FF00);
+        originalEmbed.setTitle(originalEmbed.data.title.replace('⏳', '✅'));
+        originalEmbed.setFooter({ text: 'Confirmed by both participants' });
+        await reaction.message.edit({ embeds: [originalEmbed] });
+    } else {
+        const otherUserId = user.id === request.side_a_user_id ? request.side_b_user_id : request.side_a_user_id;
+        await reaction.message.channel.send(
+            `✅ <@${user.id}> has confirmed the ${request.request_type} request for Bet #${request.bet_id}. Waiting for <@${otherUserId}> to confirm...`
+        );
+    }
+}
+
+// View user's bet history - UPDATED to show actual stakes
+async function handleViewHistory(interaction) {
+    const userId = interaction.user.id;
+    const history = await db.getUserBetHistory(userId);
+
+    if (history.length === 0) {
+        await interaction.reply({ content: 'You have no bet history yet!' });
+        return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(0x0099FF)
+        .setTitle('📜 Your Bet History')
+        .setTimestamp();
+
+    for (const bet of history.slice(0, 10)) {
+        const userSide = bet.side_a_user_id === userId ? 'A' : 'B';
+        const stakes = calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds);
+        const userStake = userSide === 'A' ? stakes.stakeA : stakes.stakeB;
+        const userOdds = userSide === 'A' ? bet.side_a_odds : bet.side_b_odds;
+        const won = bet.winning_side === userSide;
+        const emoji = won ? '✅' : '❌';
+        const profit = won ? stakes.totalPot - userStake : -userStake;
+        const profitStr = profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`;
+        
+        const opponentId = userSide === 'A' ? bet.side_b_user_id : bet.side_a_user_id;
+        const userChoice = userSide === 'A' ? bet.side_a_description : bet.side_b_description;
+        
+        embed.addFields({
+            name: `${emoji} Bet #${bet.id} - ${profitStr}`,
+            value: `**${bet.description}**\n**Your pick:** ${userChoice} @ ${formatOdds(userOdds)}\n**Opponent:** <@${opponentId}>\n**Your Stake:** $${userStake.toFixed(2)}\n**Pot:** $${stakes.totalPot.toFixed(2)}`,
+            inline: false
+        });
+    }
+
+    await interaction.reply({ embeds: [embed] });
+}
+
+// Add resolution emojis to an active bet
+async function addResolutionEmojis(message) {
+    await message.react('🅰️'); // Side A wins
+    await message.react('🅱️'); // Side B wins
+    await message.react('❌'); // Cancel bet
+}
+
+// Handle reaction for joining a bet side or resolution/cancellation
+async function handleReactionAdd(reaction, user, client) {
+    const messageId = reaction.message.id;
+    
+    const bet = await db.getBetByMessageId(messageId);
+    if (!bet) return;
+
+    if (bet.status === 'pending') {
+        if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
+            await handleJoinBet(reaction, user, client, bet);
+        }
+        
+    } else if (bet.status === 'active') {
+        if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️' || reaction.emoji.name === '❌') {
+            if (bet.side_a_user_id !== user.id && bet.side_b_user_id !== user.id) {
+                await reaction.users.remove(user.id);
+                return;
+            }
+            
+            if (reaction.emoji.name === '🅰️' || reaction.emoji.name === '🅱️') {
+                await handleEmojiResolution(reaction, user, client, bet);
+            } else if (reaction.emoji.name === '❌') {
+                await handleEmojiCancellation(reaction, user, client, bet);
+            }
+        } else if (reaction.emoji.name === bet.side_a_emoji || reaction.emoji.name === bet.side_b_emoji) {
+            await reaction.users.remove(user.id);
+        }
+    }
+}
+
 // Handle emoji-based cancellation
 async function handleEmojiCancellation(reaction, user, client, bet) {
     const messageId = reaction.message.id;
     
-    // Initialize tracking if needed
     if (!resolutionTracking.has(messageId)) {
         resolutionTracking.set(messageId, {
             sideA: new Set(),
@@ -588,16 +721,11 @@ async function handleEmojiCancellation(reaction, user, client, bet) {
     
     const tracking = resolutionTracking.get(messageId);
     
-    // Add user's vote to cancel
     tracking.cancel.add(user.id);
-    
-    // Clear from resolution options
     tracking.sideA.delete(user.id);
     tracking.sideB.delete(user.id);
     
-    // Check if both participants agree to cancel
     if (tracking.cancel.has(bet.side_a_user_id) && tracking.cancel.has(bet.side_b_user_id)) {
-        // Both agree - cancel the bet
         await db.cancelActiveBet(bet.id);
         
         const embed = new EmbedBuilder()
@@ -613,7 +741,6 @@ async function handleEmojiCancellation(reaction, user, client, bet) {
 
         await reaction.message.channel.send({ embeds: [embed] });
         
-        // Update original bet message
         const originalEmbed = EmbedBuilder.from(reaction.message.embeds[0]);
         originalEmbed.setColor(0xFF0000);
         originalEmbed.setTitle(originalEmbed.data.title + ' [CANCELLED]');
@@ -621,10 +748,8 @@ async function handleEmojiCancellation(reaction, user, client, bet) {
         originalEmbed.data.fields[statusFieldIndex].value = '🚫 Cancelled by agreement';
         await reaction.message.edit({ embeds: [originalEmbed] });
         
-        // Clean up tracking
         resolutionTracking.delete(messageId);
     } else {
-        // Send status update
         const otherUserId = user.id === bet.side_a_user_id ? bet.side_b_user_id : bet.side_a_user_id;
         await reaction.message.channel.send(
             `🚫 <@${user.id}> wants to cancel Bet #${bet.id}. Waiting for <@${otherUserId}> to confirm with ❌`
@@ -638,7 +763,6 @@ async function handleResolveBet(interaction, client) {
     const winningSide = interaction.options.getString('winning_side');
     const resolver = interaction.user;
 
-    // Get the bet
     const bet = await db.getBetById(betId);
     
     if (!bet) {
@@ -651,13 +775,11 @@ async function handleResolveBet(interaction, client) {
         return;
     }
 
-    // Check if user is a participant
     if (bet.side_a_user_id !== resolver.id && bet.side_b_user_id !== resolver.id) {
         await interaction.reply({ content: '❌ Only bet participants can resolve it!', ephemeral: true });
         return;
     }
 
-    // Check for existing resolution request
     const existingRequest = await db.getActiveResolutionRequest(betId);
     if (existingRequest) {
         await interaction.reply({ 
@@ -667,7 +789,6 @@ async function handleResolveBet(interaction, client) {
         return;
     }
 
-    // Create resolution request
     const winnerDesc = winningSide === 'A' ? bet.side_a_description : bet.side_b_description;
     const loserDesc = winningSide === 'A' ? bet.side_b_description : bet.side_a_description;
     
@@ -694,7 +815,6 @@ async function handleResolveBet(interaction, client) {
     const message = await interaction.fetchReply();
     await message.react('✅');
     
-    // Create request in database
     await db.createResolutionRequest(betId, 'resolve', winningSide, message.id, interaction.channelId);
 }
 
@@ -703,7 +823,6 @@ async function handleCancelBet(interaction, client) {
     const betId = interaction.options.getInteger('bet_id');
     const canceller = interaction.user;
 
-    // Get the bet
     const bet = await db.getBetById(betId);
     
     if (!bet) {
@@ -711,9 +830,7 @@ async function handleCancelBet(interaction, client) {
         return;
     }
 
-    // Handle based on status
     if (bet.status === 'pending') {
-        // Pending bets can be cancelled by creator or single participant
         if (bet.creator_id !== canceller.id && 
             bet.side_a_user_id !== canceller.id && 
             bet.side_b_user_id !== canceller.id) {
@@ -721,18 +838,15 @@ async function handleCancelBet(interaction, client) {
             return;
         }
         
-        // Cancel immediately
         await db.cancelBet(betId);
         await interaction.reply({ content: `✅ Bet #${betId} has been cancelled.` });
         
     } else if (bet.status === 'active') {
-        // Active bets need both participants to agree
         if (bet.side_a_user_id !== canceller.id && bet.side_b_user_id !== canceller.id) {
             await interaction.reply({ content: '❌ Only bet participants can request cancellation!', ephemeral: true });
             return;
         }
 
-        // Check for existing cancellation request
         const existingRequest = await db.getActiveResolutionRequest(betId);
         if (existingRequest) {
             await interaction.reply({ 
@@ -742,7 +856,6 @@ async function handleCancelBet(interaction, client) {
             return;
         }
 
-        // Create cancellation request
         const embed = new EmbedBuilder()
             .setColor(0xFFFF00)
             .setTitle('🚫 Cancellation Request - Confirmation Required')
@@ -750,7 +863,7 @@ async function handleCancelBet(interaction, client) {
             .addFields(
                 { name: 'Side A', value: `<@${bet.side_a_user_id}>: ${bet.side_a_description}`, inline: false },
                 { name: 'Side B', value: `<@${bet.side_b_user_id}>: ${bet.side_b_description}`, inline: false },
-                { name: 'Amount', value: `$${bet.amount} each side`, inline: true }
+                { name: 'Stakes', value: `A: $${calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds).stakeA.toFixed(2)} | B: $${calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds).stakeB.toFixed(2)}`, inline: true }
             )
             .setFooter({ text: 'Both participants must react with ✅ to confirm cancellation. Request expires in 24 hours.' })
             .setTimestamp();
@@ -759,7 +872,6 @@ async function handleCancelBet(interaction, client) {
         const message = await interaction.fetchReply();
         await message.react('✅');
         
-        // Create request in database
         await db.createResolutionRequest(betId, 'cancel', null, message.id, interaction.channelId);
         
     } else {
@@ -767,111 +879,7 @@ async function handleCancelBet(interaction, client) {
     }
 }
 
-// Handle confirmation reactions for resolution requests
-async function handleResolutionConfirmation(reaction, user, client) {
-    const request = await db.getResolutionRequestByMessageId(reaction.message.id);
-    if (!request || reaction.emoji.name !== '✅') return;
-    
-    // Check if user is a participant
-    const userSide = request.side_a_user_id === user.id ? 'A' : 
-                    request.side_b_user_id === user.id ? 'B' : null;
-    
-    if (!userSide) {
-        await reaction.users.remove(user.id);
-        return;
-    }
-    
-    // Confirm the request
-    const result = await db.confirmResolutionRequest(request.id, user.id, userSide);
-    
-    if (result.bothConfirmed) {
-        const bet = await db.getBetById(request.bet_id);
-        
-        if (request.request_type === 'resolve') {
-            // Resolve the bet
-            await db.resolveBet(request.bet_id, request.proposed_winner);
-            
-            // Calculate payouts
-            const winnerId = request.proposed_winner === 'A' ? bet.side_a_user_id : bet.side_b_user_id;
-            const loserId = request.proposed_winner === 'A' ? bet.side_b_user_id : bet.side_a_user_id;
-            const winnerOdds = request.proposed_winner === 'A' ? bet.side_a_odds : bet.side_b_odds;
-            const winnerPayout = calculatePayout(bet.amount, winnerOdds) - bet.amount;
-            const loserLoss = -bet.amount;
-            
-            // Update stats
-            await db.updateUserStats(winnerId, true, bet.amount, winnerPayout);
-            await db.updateUserStats(loserId, false, bet.amount, loserLoss);
-            
-            // Send confirmation
-            const winnerDesc = request.proposed_winner === 'A' ? bet.side_a_description : bet.side_b_description;
-            const loserDesc = request.proposed_winner === 'A' ? bet.side_b_description : bet.side_a_description;
-            
-            const embed = new EmbedBuilder()
-                .setColor(0x00FF00)
-                .setTitle('✅ Bet Resolved!')
-                .setDescription(`**Bet #${request.bet_id}: ${bet.description}**`)
-                .addFields(
-                    { 
-                        name: '🏆 Winner', 
-                        value: `<@${winnerId}>\n**Side ${request.proposed_winner}:** ${winnerDesc}\n**Wagered:** $${bet.amount.toFixed(2)}\n**Won:** +$${winnerPayout.toFixed(2)}\n**Total Return:** $${(bet.amount + winnerPayout).toFixed(2)}`, 
-                        inline: true 
-                    },
-                    { 
-                        name: '❌ Loser', 
-                        value: `<@${loserId}>\n**Side ${request.proposed_winner === 'A' ? 'B' : 'A'}:** ${loserDesc}\n**Lost:** -$${bet.amount.toFixed(2)}`, 
-                        inline: true 
-                    }
-                )
-                .setTimestamp();
-            
-            await reaction.message.channel.send({ embeds: [embed] });
-            
-        } else if (request.request_type === 'cancel') {
-            // Cancel the bet
-            await db.cancelActiveBet(request.bet_id);
-            
-            const embed = new EmbedBuilder()
-                .setColor(0xFFFF00)
-                .setTitle('🚫 Bet Cancelled')
-                .setDescription(`**Bet #${request.bet_id}: ${bet.description}**\n\nBoth participants agreed to cancel. No money changed hands.`)
-                .setTimestamp();
-            
-            await reaction.message.channel.send({ embeds: [embed] });
-        }
-        
-        // Delete the resolution request
-        await db.deleteResolutionRequest(request.id);
-        
-        // Update the request message
-        const originalEmbed = EmbedBuilder.from(reaction.message.embeds[0]);
-        originalEmbed.setColor(0x00FF00);
-        originalEmbed.setTitle(originalEmbed.data.title.replace('⏳', '✅'));
-        originalEmbed.setFooter({ text: 'Confirmed by both participants' });
-        await reaction.message.edit({ embeds: [originalEmbed] });
-        
-    } else {
-        // Send confirmation notice
-        const otherUserId = user.id === request.side_a_user_id ? request.side_b_user_id : request.side_a_user_id;
-        await reaction.message.channel.send(
-            `✅ <@${user.id}> has confirmed the ${request.request_type} request for Bet #${request.bet_id}. Waiting for <@${otherUserId}> to confirm...`
-        );
-    }
-}
-
-// Updated handleReactionAdd to handle resolution confirmations
-async function handleReactionAddMain(reaction, user, client) {
-    // Check if this is a resolution request confirmation first
-    const resolutionRequest = await db.getResolutionRequestByMessageId(reaction.message.id);
-    if (resolutionRequest) {
-        await handleResolutionConfirmation(reaction, user, client);
-        return;
-    }
-    
-    // Otherwise handle as bet interaction
-    await handleReactionAdd(reaction, user, client);
-}
-
-// View active bets
+// View active bets - UPDATED to show proper stakes
 async function handleViewActiveBets(interaction) {
     const bets = await db.getActiveBets();
 
@@ -885,54 +893,19 @@ async function handleViewActiveBets(interaction) {
         .setTitle('📊 Active & Pending Bets')
         .setTimestamp();
 
-    for (const bet of bets.slice(0, 10)) { // Show max 10
+    for (const bet of bets.slice(0, 10)) {
         const status = bet.status === 'pending' ? '⏳ Pending' : '✅ Active';
-        const sideAInfo = `${bet.side_a_description} @ ${formatOdds(bet.side_a_odds)}`;
-        const sideBInfo = `${bet.side_b_description} @ ${formatOdds(bet.side_b_odds)}`;
+        const stakes = calculateBalancedStakes(bet.amount, bet.side_a_odds, bet.side_b_odds);
+        const sideAInfo = `${bet.side_a_description} @ ${formatOdds(bet.side_a_odds)} (Stake: $${stakes.stakeA.toFixed(2)})`;
+        const sideBInfo = `${bet.side_b_description} @ ${formatOdds(bet.side_b_odds)} (Stake: $${stakes.stakeB.toFixed(2)})`;
         
         const participants = bet.status === 'active' ? 
-            `**Side A:** <@${bet.side_a_user_id}> (${sideAInfo})\n**Side B:** <@${bet.side_b_user_id}> (${sideBInfo})` : 
-            `**Side A:** ${bet.side_a_user_id ? `<@${bet.side_a_user_id}>` : 'Open'} (${sideAInfo})\n**Side B:** ${bet.side_b_user_id ? `<@${bet.side_b_user_id}>` : 'Open'} (${sideBInfo})`;
+            `**Side A:** <@${bet.side_a_user_id}>\n${sideAInfo}\n**Side B:** <@${bet.side_b_user_id}>\n${sideBInfo}` : 
+            `**Side A:** ${bet.side_a_user_id ? `<@${bet.side_a_user_id}>` : 'Open'}\n${sideAInfo}\n**Side B:** ${bet.side_b_user_id ? `<@${bet.side_b_user_id}>` : 'Open'}\n${sideBInfo}`;
         
         embed.addFields({
-            name: `Bet #${bet.id} - ${status} - $${bet.amount}`,
+            name: `Bet #${bet.id} - ${status} - Pot: $${stakes.totalPot.toFixed(2)}`,
             value: `**${bet.description}**\n${participants}`,
-            inline: false
-        });
-    }
-
-    await interaction.reply({ embeds: [embed] });
-}
-
-// View bet history
-async function handleViewHistory(interaction) {
-    const userId = interaction.user.id;
-    const history = await db.getUserBetHistory(userId);
-
-    if (history.length === 0) {
-        await interaction.reply({ content: 'You have no bet history yet!' });
-        return;
-    }
-
-    const embed = new EmbedBuilder()
-        .setColor(0x0099FF)
-        .setTitle('📜 Your Bet History')
-        .setTimestamp();
-
-    for (const bet of history.slice(0, 10)) { // Show max 10
-        const userSide = bet.side_a_user_id === userId ? 'A' : 'B';
-        const userOdds = userSide === 'A' ? bet.side_a_odds : bet.side_b_odds;
-        const won = bet.winning_side === userSide;
-        const emoji = won ? '✅' : '❌';
-        const profit = won ? (calculatePayout(bet.amount, userOdds) - bet.amount) : -bet.amount;
-        const profitStr = profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`;
-        
-        const opponentId = userSide === 'A' ? bet.side_b_user_id : bet.side_a_user_id;
-        const userChoice = userSide === 'A' ? bet.side_a_description : bet.side_b_description;
-        
-        embed.addFields({
-            name: `${emoji} Bet #${bet.id} - ${profitStr}`,
-            value: `**${bet.description}**\n**Your pick:** ${userChoice} @ ${formatOdds(userOdds)}\n**Opponent:** <@${opponentId}>\n**Wager:** $${bet.amount}`,
             inline: false
         });
     }
@@ -962,7 +935,7 @@ async function handleViewStats(interaction) {
             { name: 'Won', value: stats.bets_won.toString(), inline: true },
             { name: 'Lost', value: stats.bets_lost.toString(), inline: true },
             { name: 'Win Rate', value: `${winRate}%`, inline: true },
-            { name: 'Average Bet', value: `$${avgBet}`, inline: true },
+            { name: 'Average Stake', value: `$${avgBet}`, inline: true },
             { name: 'Total Wagered', value: `$${stats.total_wagered.toFixed(2)}`, inline: true },
             { name: 'Total Won', value: `$${stats.total_won.toFixed(2)}`, inline: true },
             { name: 'Total Lost', value: `$${stats.total_lost.toFixed(2)}`, inline: true },
@@ -1001,6 +974,17 @@ async function handleViewLeaderboard(interaction) {
 
     embed.setDescription(description);
     await interaction.reply({ embeds: [embed] });
+}
+
+// Updated handleReactionAdd to handle resolution confirmations
+async function handleReactionAddMain(reaction, user, client) {
+    const resolutionRequest = await db.getResolutionRequestByMessageId(reaction.message.id);
+    if (resolutionRequest) {
+        await handleResolutionConfirmation(reaction, user, client);
+        return;
+    }
+    
+    await handleReactionAdd(reaction, user, client);
 }
 
 module.exports = {
