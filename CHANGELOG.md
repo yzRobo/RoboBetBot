@@ -16,6 +16,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
+## [1.3.0] - 2025-08-26
+
+### Added
+- **True Peer-to-Peer Betting System** - Proper stake calculation based on odds
+  - Different stake amounts for favorites vs underdogs
+  - Automatic calculation ensures pot always balances
+  - No phantom money - all winnings come from participants
+- **Stake vs Payout Display** - Bets now show separate "Stake" and "To Win" amounts
+- **Database Migration Support** - Script to update existing bets with proper stakes
+- **New Database Columns** - Added side_a_stake and side_b_stake for tracking actual wagers
+
+### Changed
+- **Bet Creation Logic** - Amount parameter now represents base "to win" amount
+- **Payout Calculations** - Updated to use actual staked amounts instead of base amount
+- **Bet Display Format** - Shows total pot prominently with individual stakes
+- **Stats Tracking** - Now tracks actual money wagered (stakes) not base amounts
+
+### Fixed
+- **Economic Model** - Fixed fundamental flaw where payouts didn't match total stakes
+- **Odds Implementation** - Proper risk/reward balance based on betting odds
+- **Payout Logic** - Winner receives exactly the total pot (both stakes combined)
+
+### Technical
+- Backward compatible with existing databases
+- Auto-calculation for legacy bets without stake columns
+- Migration script for updating existing data
+
 ## [1.2.1] - 2025-08-26
 
 ### Fixed
@@ -127,7 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Portable build script
 - Self-contained Windows executable
 
-[Unreleased]: https://github.com/yzRobo/RoboBetBot/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/yzRobo/RoboBetBot/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/yzRobo/RoboBetBot/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/yzRobo/RoboBetBot/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/yzRobo/RoboBetBot/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yzRobo/RoboBetBot/compare/v1.0.0...v1.1.0
