@@ -220,26 +220,28 @@ function calculateStakeToWin(amountToWin, odds) {
 
 // Calculate proper stakes for balanced peer-to-peer betting
 function calculateBalancedStakes(baseAmount, oddsA, oddsB) {
-    // The base amount represents what the underdog (higher odds) wants to win
-    // Calculate stakes so the total pot equals winner's stake + winnings
+    // In true peer-to-peer betting, the pot must balance
+    // Winner gets their stake back plus the loser's stake
     
     let stakeA, stakeB, toWinA, toWinB;
     
     if (oddsA >= oddsB) {
         // Side A is underdog (higher odds)
+        // Underdog stakes less to win more
         stakeA = baseAmount;
         toWinA = baseAmount * (oddsA - 1);
-        stakeB = toWinA;
-        toWinB = stakeB / (oddsB - 1);
+        stakeB = toWinA;  // Favorite must stake what underdog wins
+        toWinB = stakeA;  // Favorite wins the underdog's stake
     } else {
         // Side B is underdog (higher odds)
+        // Underdog stakes less to win more
         stakeB = baseAmount;
         toWinB = baseAmount * (oddsB - 1);
-        stakeA = toWinB;
-        toWinA = stakeA / (oddsA - 1);
+        stakeA = toWinB;  // Favorite must stake what underdog wins
+        toWinA = stakeB;  // Favorite wins the underdog's stake
     }
     
-    // Ensure the pot balances (total stakes = winner's return)
+    // Verify the pot balances
     const totalPot = stakeA + stakeB;
     
     return {
