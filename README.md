@@ -226,7 +226,7 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
 
 ## License
 
-**GPL-3.0** - This ensures RoboBetBot remains free and open source forever.
+**GPL-3.0**: This ensures RoboBetBot remains free and open source forever.
 
 Key points:
 - Free to use for any purpose
